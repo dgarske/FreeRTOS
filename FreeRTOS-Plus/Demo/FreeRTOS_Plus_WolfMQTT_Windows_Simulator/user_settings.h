@@ -3,6 +3,9 @@
 #ifndef _USER_SETTING_H_
 #define _USER_SETTING_H_
 
+/* WOLFMQTT Enable for TLS */
+#define ENABLE_MQTT_TLS
+
 /* platform specific */
 #define SIZEOF_LONG_LONG 8
 
@@ -24,6 +27,5 @@
 #define NO_MD4
 #define NO_PWDBASED
 #define NO_DES3
-
 
 #endif /* _USER_SETTING_H_ */
