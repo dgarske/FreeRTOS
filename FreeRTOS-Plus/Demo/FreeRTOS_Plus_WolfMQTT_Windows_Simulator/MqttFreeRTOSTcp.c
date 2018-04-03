@@ -368,7 +368,7 @@ int mqtt_tls_cb(MqttClient* client)
 #endif /* ENABLE_MQTT_TLS */
 
 
-void vSecureMQTTClientTask( void *pvParameters )
+void* vSecureMQTTClientTask( void *pvParameters )
 {
     int rc;
     int state = -1;

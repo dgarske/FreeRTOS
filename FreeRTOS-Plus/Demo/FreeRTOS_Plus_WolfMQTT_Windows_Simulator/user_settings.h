@@ -1,4 +1,5 @@
-/* Example user settings file (enabled with WOLFSSL_USER_SETTINGS) for FreeRTOS on Windows */
+/* Example user settings file (enabled with WOLFSSL_USER_SETTINGS)
+ * For FreeRTOS TCP wolfMQTT on Windows */
 
 #ifndef _USER_SETTING_H_
 #define _USER_SETTING_H_
@@ -6,8 +7,13 @@
 /* WOLFMQTT Enable for TLS */
 #define ENABLE_MQTT_TLS
 
+/* Use the FreeRTOS TCP API's */
+#define FREERTOS_TCP
+
 /* platform specific */
 #define SIZEOF_LONG_LONG 8
+#define WOLFSSL_HAVE_MIN
+#define WOLFSSL_HAVE_MAX
 
 /* side-channel resistance */
 #define TFM_TIMING_RESISTANCE
