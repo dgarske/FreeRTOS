@@ -117,6 +117,12 @@ static int NetConnect(void *context, const char* host, word16 port,
 		if (sock->fd == FREERTOS_INVALID_SOCKET)
             break;
 
+        /* Set timeouts for socket */
+        FreeRTOS_setsockopt(sock->fd, 0, FREERTOS_SO_SNDTIMEO,
+            (void*)&timeout_ms, sizeof(timeout_ms));
+        FreeRTOS_setsockopt(sock->fd, 0, FREERTOS_SO_RCVTIMEO,
+            (void*)&timeout_ms, sizeof(timeout_ms));
+
 		sock->state = SOCK_CONN;
 
 		/* fall through */
@@ -142,12 +148,13 @@ static int NetRead(void *context, byte* buf, int buf_len, int timeout_ms)
     /* Create the set of sockets that will be passed into FreeRTOS_select(). */
 	if (gxFDSet == NULL) {
 		gxFDSet = FreeRTOS_CreateSocketSet();
-		if (gxFDSet != NULL)
-			FreeRTOS_FD_SET(sock->fd, gxFDSet, eSELECT_ALL & ~eSELECT_WRITE);
 	}
 
     if (gxFDSet == NULL)
         return MQTT_CODE_ERROR_OUT_OF_BUFFER;
+
+    /* set the socket to do used */
+    FreeRTOS_FD_SET(sock->fd, gxFDSet, eSELECT_READ | eSELECT_EXCEPT);
 
 	sock->bytes = 0;
 
@@ -420,9 +427,9 @@ void* vSecureMQTTClientTask( void *pvParameters )
                     PRINTF("NetConnect continue(%d)...", rc);
                     break;
                 }
-
                 XMEMSET(&connect,0,sizeof(connect));
                 connect.keep_alive_sec = DEFAULT_KEEP_ALIVE_SEC;
+
                 connect.clean_session = 1;
                 connect.client_id = DEFAULT_CLIENT_ID;
                 //connect.username = DEFAULT_USERNAME;
