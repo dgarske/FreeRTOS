@@ -4,6 +4,11 @@
 #ifndef _USER_SETTING_H_
 #define _USER_SETTING_H_
 
+/* optional debugging */
+#if 0
+#define DEBUG_WOLFSSL
+#endif
+
 /* Use the FreeRTOS TCP API's */
 #define FREERTOS_TCP
 

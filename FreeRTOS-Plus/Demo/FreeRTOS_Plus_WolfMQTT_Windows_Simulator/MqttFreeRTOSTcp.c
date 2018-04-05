@@ -146,20 +146,19 @@ static int NetRead(void *context, byte* buf, int buf_len, int timeout_ms)
     }
 
     /* Create the set of sockets that will be passed into FreeRTOS_select(). */
-	if (gxFDSet == NULL) {
+	if (gxFDSet == NULL)
 		gxFDSet = FreeRTOS_CreateSocketSet();
-	}
-
     if (gxFDSet == NULL)
         return MQTT_CODE_ERROR_OUT_OF_BUFFER;
-
-    /* set the socket to do used */
-    FreeRTOS_FD_SET(sock->fd, gxFDSet, eSELECT_READ | eSELECT_EXCEPT);
 
 	sock->bytes = 0;
 
 	/* Loop until buf_len has been read, error or timeout */
 	while ((sock->bytes < buf_len) && (timeout == 0)) {
+
+		/* set the socket to do used */
+		FreeRTOS_FD_SET(sock->fd, gxFDSet, eSELECT_READ | eSELECT_EXCEPT);
+
 		/* Wait for any event within the socket set. */
 		rc = FreeRTOS_select(gxFDSet, timeout_ms);
 		if (rc != 0) {
@@ -169,12 +168,7 @@ static int NetRead(void *context, byte* buf, int buf_len, int timeout_ms)
 				rc = (int)FreeRTOS_recv(sock->fd, &buf[sock->bytes],
                     buf_len - sock->bytes, 0);
 
-				if ((rc < 0) && (rc != -pdFREERTOS_ERRNO_EWOULDBLOCK)) {
-			        break;
-			    }
-
 				if (rc <= 0) {
-					PRINTF("[rxErr:%d]", rc);
 					rc = -1;
 					break; /* Error */
 				}
@@ -188,8 +182,22 @@ static int NetRead(void *context, byte* buf, int buf_len, int timeout_ms)
 		}
 	}
 
-    if (rc == 0 && timeout)
+    if (rc == 0 && timeout) {
         rc = MQTT_CODE_ERROR_TIMEOUT;
+    }
+    else if (rc < 0) {
+    #ifdef WOLFMQTT_NONBLOCK
+        if (rc == -pdFREERTOS_ERRNO_EWOULDBLOCK) {
+            return MQTT_CODE_CONTINUE;
+        }
+    #endif
+        PRINTF("NetRead: Error %d", rc);
+        rc = MQTT_CODE_ERROR_NETWORK;
+    }
+    else {
+        rc = sock->bytes;
+    }
+    sock->bytes = 0;
 
 	return rc;
 }
@@ -207,11 +215,13 @@ static int NetWrite(void *context, const byte* buf, int buf_len, int timeout_ms)
 
 	rc = (int)FreeRTOS_send(sock->fd, buf, buf_len, 0);
 
-	if ((rc < 0) && (rc != -pdFREERTOS_ERRNO_EWOULDBLOCK)) {
-		return MQTT_CODE_ERROR_NETWORK;
-	}
-
     if (rc < 0) {
+    #ifdef WOLFMQTT_NONBLOCK
+        if (rc == -pdFREERTOS_ERRNO_EWOULDBLOCK) {
+            return MQTT_CODE_CONTINUE;
+        }
+    #endif
+        PRINTF("NetWrite: Error %d", rc);
         rc = MQTT_CODE_ERROR_NETWORK;
     }
 
