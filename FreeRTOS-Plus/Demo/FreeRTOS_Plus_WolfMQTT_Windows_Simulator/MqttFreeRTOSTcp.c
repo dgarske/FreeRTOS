@@ -53,42 +53,6 @@ static int mPacketIdLast;
 static const char* mTlsCaFile = TLS_CA_CERT;
 
 
-static uint32_t ConvertIpFromString(const char* host)
-{
-	union {
-		uint8_t  b[4];
-		uint32_t iv;
-	} ip;
-	uint8_t	k = 0;
-
-	ip.iv = 0;
-	while (*host) {
-		if (*host == '.') {
-			if (k < 3)
-				k++;
-			else {
-				/* error too many dots */
-				ip.iv = 0;
-				break;
-			}
-		}
-		else if ((*host >= '0') && (*host <= '9')) {
-			ip.b[k] *= 10;
-			ip.b[k] += (*host - '0');
-		}
-		else {
-			/* error invalid number found */
-			ip.iv = 0;
-			break;
-		}
-		host++;
-	}
-	if (k != 3)
-		ip.iv = 0; /* error not enough dots */
-
-	return ip.iv;
-}
-
 static int NetConnect(void *context, const char* host, word16 port,
     int timeout_ms)
 {
@@ -100,10 +64,7 @@ static int NetConnect(void *context, const char* host, word16 port,
 
 	switch (sock->state) {
 	case SOCK_BEGIN:
-		hostIp = ConvertIpFromString(host);
-		if (hostIp == 0)
-			hostIp = FreeRTOS_gethostbyname_a(host, NULL, 0, 0);
-
+		hostIp = FreeRTOS_gethostbyname(host);
 		if (hostIp == 0)
             break;
 
