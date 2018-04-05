@@ -1,6 +1,7 @@
 /* Wolf Includes */
 #include "wolfssl/wolfcrypt/settings.h"
 #include "wolfmqtt/mqtt_client.h"
+#include "examples/mqttnet.h" /* example FreeRTOS TCP network callbacks */
 #include "wolfssl/ssl.h"
 
 /* Standard includes. */
@@ -29,183 +30,14 @@
 #define DEFAULT_TOPIC_NAME      WOLFMQTT_TOPIC_NAME"testTopic"
 #define TLS_CA_CERT             "DSTRootCAX3.pem"
 
-/* Context for network callbacks */
-typedef enum NB_Stat {
-    SOCK_BEGIN = 0,
-    SOCK_CONN,
-} NB_Stat;
-
-typedef struct SocketContext {
-    Socket_t fd;
-    NB_Stat  state;
-    int      bytes;
-    struct freertos_sockaddr addr;
-} SocketContext;
 
 
 static MqttClient gMQTTC;
 static MqttNet gMQTTN;
 static byte	gMqttTxBuf[MQTT_BUF_SIZE];
 static byte	gMqttRxBuf[MQTT_BUF_SIZE];
-static SocketSet_t gxFDSet;
-static SocketContext gMqttContext;
 static int mPacketIdLast;
 static const char* mTlsCaFile = TLS_CA_CERT;
-
-
-static int NetConnect(void *context, const char* host, word16 port,
-    int timeout_ms)
-{
-	SocketContext *sock = (SocketContext*)context;
-	uint32_t hostIp = 0;
-	int rc = -1;
-
-	(void)timeout_ms;
-
-	switch (sock->state) {
-	case SOCK_BEGIN:
-		hostIp = FreeRTOS_gethostbyname(host);
-		if (hostIp == 0)
-            break;
-
-		sock->addr.sin_family = FREERTOS_AF_INET;
-		sock->addr.sin_port = FreeRTOS_htons(port);
-		sock->addr.sin_addr = hostIp;
-
-		/* Create socket */
-		sock->fd = FreeRTOS_socket(sock->addr.sin_family, FREERTOS_SOCK_STREAM,
-            FREERTOS_IPPROTO_TCP );
-
-		if (sock->fd == FREERTOS_INVALID_SOCKET)
-            break;
-
-        /* Set timeouts for socket */
-        FreeRTOS_setsockopt(sock->fd, 0, FREERTOS_SO_SNDTIMEO,
-            (void*)&timeout_ms, sizeof(timeout_ms));
-        FreeRTOS_setsockopt(sock->fd, 0, FREERTOS_SO_RCVTIMEO,
-            (void*)&timeout_ms, sizeof(timeout_ms));
-
-		sock->state = SOCK_CONN;
-
-		/* fall through */
-	case SOCK_CONN:
-		/* Start connect */
-		rc = FreeRTOS_connect(sock->fd, (struct freertos_sockaddr*)&sock->addr,
-            sizeof(sock->addr));
-		break;
-	}
-
-	return rc;
-}
-
-static int NetRead(void *context, byte* buf, int buf_len, int timeout_ms)
-{
-	SocketContext *sock = (SocketContext*)context;
-	int rc = -1, timeout = 0;
-
-	if (context == NULL || buf == NULL || buf_len <= 0) {
-        return MQTT_CODE_ERROR_BAD_ARG;
-    }
-
-    /* Create the set of sockets that will be passed into FreeRTOS_select(). */
-	if (gxFDSet == NULL)
-		gxFDSet = FreeRTOS_CreateSocketSet();
-    if (gxFDSet == NULL)
-        return MQTT_CODE_ERROR_OUT_OF_BUFFER;
-
-	sock->bytes = 0;
-
-	/* Loop until buf_len has been read, error or timeout */
-	while ((sock->bytes < buf_len) && (timeout == 0)) {
-
-		/* set the socket to do used */
-		FreeRTOS_FD_SET(sock->fd, gxFDSet, eSELECT_READ | eSELECT_EXCEPT);
-
-		/* Wait for any event within the socket set. */
-		rc = FreeRTOS_select(gxFDSet, timeout_ms);
-		if (rc != 0) {
-			if (FreeRTOS_FD_ISSET(sock->fd, gxFDSet)) {
-				/* Try and read number of buf_len provided,
-                    minus what's already been read */
-				rc = (int)FreeRTOS_recv(sock->fd, &buf[sock->bytes],
-                    buf_len - sock->bytes, 0);
-
-				if (rc <= 0) {
-					rc = -1;
-					break; /* Error */
-				}
-				else {
-					sock->bytes += rc; /* Data */
-				}
-			}
-		}
-		else {
-			timeout = 1;
-		}
-	}
-
-    if (rc == 0 && timeout) {
-        rc = MQTT_CODE_ERROR_TIMEOUT;
-    }
-    else if (rc < 0) {
-    #ifdef WOLFMQTT_NONBLOCK
-        if (rc == -pdFREERTOS_ERRNO_EWOULDBLOCK) {
-            return MQTT_CODE_CONTINUE;
-        }
-    #endif
-        PRINTF("NetRead: Error %d", rc);
-        rc = MQTT_CODE_ERROR_NETWORK;
-    }
-    else {
-        rc = sock->bytes;
-    }
-    sock->bytes = 0;
-
-	return rc;
-}
-
-static int NetWrite(void *context, const byte* buf, int buf_len, int timeout_ms)
-{
-	SocketContext *sock = (SocketContext*)context;
-	int rc = -1;
-
-	(void)timeout_ms;
-
-	if (context == NULL || buf == NULL || buf_len <= 0) {
-        return MQTT_CODE_ERROR_BAD_ARG;
-    }
-
-	rc = (int)FreeRTOS_send(sock->fd, buf, buf_len, 0);
-
-    if (rc < 0) {
-    #ifdef WOLFMQTT_NONBLOCK
-        if (rc == -pdFREERTOS_ERRNO_EWOULDBLOCK) {
-            return MQTT_CODE_CONTINUE;
-        }
-    #endif
-        PRINTF("NetWrite: Error %d", rc);
-        rc = MQTT_CODE_ERROR_NETWORK;
-    }
-
-	return rc;
-}
-
-static int NetDisconnect(void *context)
-{
-	SocketContext *sock = (SocketContext*)context;
-	if (sock) {
-		FreeRTOS_closesocket(sock->fd);
-		sock->state = SOCK_BEGIN;
-		sock->bytes = 0;
-	}
-
-	if (gxFDSet != NULL) {
-		FreeRTOS_DeleteSocketSet(gxFDSet);
-		gxFDSet = NULL;
-	}
-
-	return 0;
-}
 
 
 #define PRINT_BUFFER_SIZE 80
@@ -350,8 +182,7 @@ void* vSecureMQTTClientTask( void *pvParameters )
 {
     int rc;
     int state = -1;
-    uint32_t cntr = 0;
-    uint8_t pubcnt = 2;
+    word32 cntr = 0;
     MqttConnect connect;
     MqttMessage lwt_msg;
     MqttPublish publish;
@@ -362,29 +193,29 @@ void* vSecureMQTTClientTask( void *pvParameters )
     PRINTF("Starting MQTT");
 
     for(;;) {
-        /* setup network callbacks */
-        XMEMSET(&gMQTTN, 0, sizeof(gMQTTN));
-        gMQTTN.connect=NetConnect;
-        gMQTTN.read=NetRead;
-        gMQTTN.write=NetWrite;
-        gMQTTN.disconnect=NetDisconnect;
-        XMEMSET(&gMqttContext, 0, sizeof(gMqttContext));
-        gMQTTN.context= &gMqttContext;
 
-        /* initialize network state */
-        ((SocketContext *)(gMQTTN.context))->state = SOCK_BEGIN;
+        /* setup network callbacks */
+        rc = MqttClientNet_Init(&gMQTTN);
+        PRINTF("MQTT Net Init: %s (%d)",
+            MqttClient_ReturnCodeToString(rc), rc);
+        if (rc != MQTT_CODE_SUCCESS) {
+			break;
+        }
 
         rc = MqttClient_Init(&gMQTTC, &gMQTTN,
                 mqtt_message_cb,
                 gMqttTxBuf, MQTT_BUF_SIZE,
                 gMqttRxBuf, MQTT_BUF_SIZE,
                 DEFAULT_CMD_TIMEOUT_MS);
+        PRINTF("MQTT Init: %s (%d)",
+            MqttClient_ReturnCodeToString(rc), rc);
+		if (rc != MQTT_CODE_SUCCESS)
+			break;
 
-        if (rc == MQTT_CODE_SUCCESS)
-            state = 0;
+        state = 0;
 
-        cntr/=100000;
-        cntr*=100000;
+		/* trim trailing zeros for sub-counter */
+        cntr/=100000; cntr*=100000;
 
         while ((rc == MQTT_CODE_SUCCESS) || (rc == MQTT_CODE_CONTINUE)) {
             switch (state) {
@@ -398,7 +229,7 @@ void* vSecureMQTTClientTask( void *pvParameters )
                     PRINTF("NetConnect continue(%d)...", rc);
                     break;
                 }
-                XMEMSET(&connect,0,sizeof(connect));
+                XMEMSET(&connect, 0, sizeof(connect));
                 connect.keep_alive_sec = DEFAULT_KEEP_ALIVE_SEC;
 
                 connect.clean_session = 1;
@@ -406,30 +237,27 @@ void* vSecureMQTTClientTask( void *pvParameters )
                 //connect.username = DEFAULT_USERNAME;
                 //connect.password = DEFAULT_USERPW;
 
-
-                XMEMSET(&lwt_msg,0,sizeof(lwt_msg));
+                XMEMSET(&lwt_msg, 0, sizeof(lwt_msg));
                 connect.enable_lwt = 0;
                 connect.lwt_msg = &lwt_msg;
             }
-            /* fall through */
+
+            FALL_THROUGH;
             case 1:
             {
                 state = 1;
 
                 rc = MqttClient_Connect(&gMQTTC, &connect);
+                PRINTF("MQTT Connect: %s (%d)",
+                    MqttClient_ReturnCodeToString(rc), rc);
+
                 if (rc == MQTT_CODE_CONTINUE) {
                     vTaskDelay(250);
                     PRINTF("Connect continue...");
                     break;
                 }
-
-                if (rc == MQTT_CODE_SUCCESS) {
-                    PRINTF("MQTT is Connected!");
+                else if (rc == MQTT_CODE_SUCCESS) {
                     state = 2;
-                }
-                else {
-                    PRINTF("MQTT connected failed: %d", rc);
-                    state = -1;
                 }
                 break;
             }
@@ -449,41 +277,38 @@ void* vSecureMQTTClientTask( void *pvParameters )
                 subscribe.topic_count = sizeof(topics)/sizeof(MqttTopic);
                 subscribe.topics = topics;
                 rc = MqttClient_Subscribe(&gMQTTC, &subscribe);
-
-                PRINTF("Subcribed, result=%d", rc);
+                PRINTF("MQTT Subscribe: %s (%d)",
+                    MqttClient_ReturnCodeToString(rc), rc);
 
                 state = 3;
                 break;
             }
             case 3:
             {
-                rc = MqttClient_WaitMessage(&gMQTTC, 750);
+                rc = MqttClient_WaitMessage(&gMQTTC, 1000);
                 if (rc == MQTT_CODE_ERROR_TIMEOUT) {
                     /* A timeout is not an error, it just means there is no data */
                     rc = MQTT_CODE_SUCCESS;
-                };
+                }
 
                 if (rc == MQTT_CODE_SUCCESS) {
-                    pubcnt--;
-                    if (pubcnt == 0) {
-                        pubcnt = 2;
-                        cntr++;
+                    cntr++; /* increment counter */
 
-                        XSNPRINTF(PubMsg, sizeof(PubMsg), "counter:%d", (int)cntr);
+                    XSNPRINTF(PubMsg, sizeof(PubMsg), "Counter:%d", (int)cntr);
 
-                        /* Publish Topic */
-                        XMEMSET(&publish, 0, sizeof(publish));
-                        publish.retain = 0;
-                        publish.qos = DEFAULT_MQTT_QOS;
-                        publish.duplicate = 0;
-                        publish.topic_name = DEFAULT_TOPIC_NAME;
-                        publish.packet_id = mqttclient_get_packetid();
-                        publish.buffer = (byte*)PubMsg;
-                        publish.total_len = (word16)XSTRLEN(PubMsg);
-                        rc = MqttClient_Publish(&gMQTTC, &publish);
-
-                        PRINTF("Published: %s (%d)", PubMsg, rc);
-                    }
+                    /* Publish Topic */
+                    XMEMSET(&publish, 0, sizeof(publish));
+                    publish.retain = 0;
+                    publish.qos = DEFAULT_MQTT_QOS;
+                    publish.duplicate = 0;
+                    publish.topic_name = DEFAULT_TOPIC_NAME;
+                    publish.packet_id = mqttclient_get_packetid();
+                    publish.buffer = (byte*)PubMsg;
+                    publish.total_len = (word16)XSTRLEN(PubMsg);
+                    rc = MqttClient_Publish(&gMQTTC, &publish);
+                    PRINTF("MQTT Publish: Topic %s, %s (%d)",
+                        publish.topic_name,
+                        MqttClient_ReturnCodeToString(rc), rc);
                 }
                 break;
             }
@@ -492,19 +317,20 @@ void* vSecureMQTTClientTask( void *pvParameters )
             } /* switch */
 
             if ((rc != MQTT_CODE_SUCCESS) && (rc != MQTT_CODE_CONTINUE)) {
-                PRINTF("Disconnect %d code %d reason %s",
-                    state, rc, MqttClient_ReturnCodeToString(rc));
+                PRINTF("Disconnect: State %d, %s (%d)",
+                    state, MqttClient_ReturnCodeToString(rc), rc);
 
                 MqttClient_NetDisconnect(&gMQTTC);
+                break;
             }
-        }
+        } /* while loop */
 
         PRINTF("While break: %s (%d)",
             MqttClient_ReturnCodeToString(rc), rc);
 
         cntr += 100000;
         vTaskDelay(5000);
-    }
+    } /* for loop */
 
     return (void*)rc;
 }

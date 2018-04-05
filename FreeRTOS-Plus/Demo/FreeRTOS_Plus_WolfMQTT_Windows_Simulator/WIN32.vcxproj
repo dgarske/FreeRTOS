@@ -200,6 +200,7 @@
     <ClCompile Include="..\..\Source\wolfMQTT\src\mqtt_client.c" />
     <ClCompile Include="..\..\Source\wolfMQTT\src\mqtt_packet.c" />
     <ClCompile Include="..\..\Source\wolfMQTT\src\mqtt_socket.c" />
+    <ClCompile Include="..\..\Source\wolfMQTT\examples\mqttnet.c" />
     <ClCompile Include="..\..\..\FreeRTOS\Source\event_groups.c" />
     <ClCompile Include="..\..\..\FreeRTOS\Source\list.c" />
     <ClCompile Include="..\..\..\FreeRTOS\Source\portable\MemMang\heap_4.c" />
