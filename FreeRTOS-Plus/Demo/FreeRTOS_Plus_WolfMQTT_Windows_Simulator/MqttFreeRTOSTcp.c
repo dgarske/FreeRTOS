@@ -27,7 +27,7 @@
 #define DEFAULT_CLIENT_ID       "WolfMQTTClient"
 #define WOLFMQTT_TOPIC_NAME     "wolfMQTT/example/"
 #define DEFAULT_TOPIC_NAME      WOLFMQTT_TOPIC_NAME"testTopic"
-
+#define TLS_CA_CERT             "DSTRootCAX3.pem"
 
 /* Context for network callbacks */
 typedef enum NB_Stat {
@@ -50,6 +50,7 @@ static byte	gMqttRxBuf[MQTT_BUF_SIZE];
 static SocketSet_t gxFDSet;
 static SocketContext gMqttContext;
 static int mPacketIdLast;
+static const char* mTlsCaFile = TLS_CA_CERT;
 
 
 static uint32_t ConvertIpFromString(const char* host)
@@ -328,7 +329,6 @@ static int mqtt_tls_cb(MqttClient* client)
 
     #if !defined(NO_CERT)
     #if !defined(NO_FILESYSTEM)
-#if 0
         if (mTlsCaFile) {
             /* Load CA certificate file */
             rc = wolfSSL_CTX_load_verify_locations(client->tls.ctx, mTlsCaFile, NULL);
@@ -337,11 +337,11 @@ static int mqtt_tls_cb(MqttClient* client)
         /* If using a client certificate it can be loaded using: */
         /* rc = wolfSSL_CTX_use_certificate_file(client->tls.ctx,
          *                              clientCertFile, WOLFSSL_FILETYPE_PEM);*/
-#endif
+
     #else
         /* Load CA certificate buffer */
         rc = wolfSSL_CTX_load_verify_buffer(client->tls.ctx, caCertBuf,
-                                          2047, WOLFSSL_FILETYPE_PEM);
+                                          caCertBufLen, WOLFSSL_FILETYPE_PEM);
 
         #if 0
         if (mTlsCaFile) {
